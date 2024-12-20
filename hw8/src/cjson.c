@@ -4,7 +4,7 @@
 #include <string.h>
 #include <ctype.h>
 #include "stdbool.h"
-#define MAX_KEY_VALUE_LENGTH 100
+#define MAX_KEY_VALUE_LENGTH 1024
 
 typedef struct {
     char *key;
@@ -115,38 +115,70 @@ static PyObject* cjson_loads(PyObject* self, PyObject* args) {
     return dict;
 }
 
-// char* dumps(KeyValuePair *pairs, int pair_count) {
-//     char *json_str = (char*)malloc(1024); 
-//     int pos = 0;
-//     pos += sprintf(json_str + pos, "{");
-//     for (int i = 0; i < pair_count; i++) {
-//         pos += sprintf(json_str + pos, "\"%s\": \"%s\"", pairs[i].key, pairs[i].value);
-//         if (i < pair_count - 1) {
-//             pos += sprintf(json_str + pos, ", ");
-//         }
-//     }
-//     pos += sprintf(json_str + pos, "}");
-//     return json_str;
-// }
-
-static PyObject* cjson_dumps(PyObject* self, PyObject* args) 
-{
+static PyObject* cjson_dumps(PyObject* self, PyObject* args) {
     PyObject *dict;
     if (!PyArg_ParseTuple(args, "O", &dict)) 
         return NULL;
+
     if (!PyDict_Check(dict)) {
         PyErr_SetString(PyExc_TypeError, "Argument must be a Python dictionary");
         return NULL;
     }
-    PyObject *json_str = Py_BuildValue("s", "{}");  
+
+    PyObject *json_str = PyUnicode_FromString("{");
+
     PyObject *key, *value;
     Py_ssize_t pos = 0;
+    int first = 1;  
+
     while (PyDict_Next(dict, &pos, &key, &value)) {
         const char *key_str = PyUnicode_AsUTF8(key);
-        const char *value_str = PyUnicode_AsUTF8(value);
-        if (key_str && value_str) 
-            json_str = Py_BuildValue("s", strcat(strdup(json_str), key_str));
+        if (!key_str) {
+            PyErr_SetString(PyExc_TypeError, "Key must be a string");
+            return NULL;
+        }
+
+        const char *value_str = NULL;
+        bool is_digit = 0;
+        if (PyUnicode_Check(value)) {
+            value_str = PyUnicode_AsUTF8(value);
+        } else if (PyLong_Check(value)) {
+            is_digit = 1;
+            value_str = PyUnicode_AsUTF8(PyObject_Str(value));
+        } else if (PyFloat_Check(value)) {
+            value_str = PyUnicode_AsUTF8(PyObject_Str(value));
+            is_digit = 1;
+        } else {
+            PyErr_SetString(PyExc_TypeError, "Value must be a string, integer, or float");
+            return NULL;
+        }
+
+        if (!value_str) {
+            PyErr_SetString(PyExc_TypeError, "Value conversion to string failed");
+            return NULL;
+        }
+
+        if (!first) {
+            PyObject *comma = PyUnicode_FromString(", ");
+            json_str = PyUnicode_Concat(json_str, comma);
+            Py_DECREF(comma);
+        }
+
+        PyObject *pair;
+        if(!is_digit)
+            pair = PyUnicode_FromFormat("\"%s\": \"%s\"", key_str, value_str);
+        else 
+            pair = PyUnicode_FromFormat("\"%s\": %s", key_str, value_str);
+        json_str = PyUnicode_Concat(json_str, pair);
+        Py_DECREF(pair);
+
+        first = 0;
     }
+
+    PyObject *closing_brace = PyUnicode_FromString("}");
+    json_str = PyUnicode_Concat(json_str, closing_brace);
+    Py_DECREF(closing_brace);
+
     return json_str;
 }
 
